@@ -91,3 +91,19 @@ NOTE - The backtick (`) character is the escape character for powershell. The hy
 ## Adding the launcher to a Secret Template
 Once the launcher has been created, it can be added to a Secret Template by navigating to "**Administration -> Secret Templates -> Your Template Name -> Mapping**". Add the launcher to the template by clicking the "**Add Mapping**" button in the top right. Select the launcher that was just created and map "**Username**" and "**Password**" to their respective fields. The "**Domain**" field can be left mapped to "**<blank>**".
 
+## Finding Element IDs for a webpage
+Below is an example of how to find the IDs of the username, password, and sign-in elements on a webpage.
+Navigate to the login url of your webpage. In this example, the Rapid7 Insight url will be used ("https://insight.rapid7.com/login#/").
+
+From there, right click on the username field and select "**Inspect**". This will show the properties of the username field. Look for the "**ID**" of the element. In this example, the ID of the username/email field is "**okta-signin-username**". Repeat this process for the password field and the submit/login button.
+
+![rapid7_user](https://user-images.githubusercontent.com/33561466/226447987-e2e1393e-1474-46d1-a269-48ac8d8db780.PNG)
+
+Using the above method, inspecting the password field gives us the ID, which is "**okta-signin-password**".
+And again, inspecting the "**Sign In**" button gives us the ID "**okta-signin-submit**".
+
+
+
+
+
+
