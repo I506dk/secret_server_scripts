@@ -6,7 +6,7 @@ Powershell script to automatically log into a given url using selenium
 # https://github.com/adamdriscoll/selenium-powershell
 
 # Example usage from the command line
-# powershell.exe C:\path\to\script\.\web_login.ps1 -username myusername -password mypassword -webpage_url https://mypage.com/login -username_id signin-username -password_id signin-pasword -submit_id signin-button
+# powershell.exe C:\path\to\script\.\web_login.ps1 -username myname -password mypasword -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
 
 # Password field may contain characters that need to be escaped using a backtick `
 # Characters to escape: $&(){}<>\|;',
@@ -23,7 +23,7 @@ Record Additional Processes: < None >
 Use SSH Tunneling with SSH Proxy: No
 
 Process Name: powershell.exe
-Process Arguments: C:\path\to\script\.\web_login.ps1 -username $USERNAME -password $PASSWORD -webpage_url https://mypage.com/login -username_id signin-username -password_id signin-pasword -submit_id signin-button
+Process Arguments: C:\path\to\script\.\web_login.ps1 -username $USERNAME -password $PASSWORD -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
 Run Process as Secret Credentials: No
 Load User Profile: No
 Use Operating System Shell: No
@@ -34,60 +34,91 @@ Charactes to Escape: $&(){}<>\|;',
 
 #>
 
-
 # Set input parameters
 param(
-    # Username field
+    # Username field (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The username to inject into the webpage.")]
     [string]$username,
 
-    # Password field
+    # Password field (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The password to inject into the webpage.")]
     [string]$password,
+	
+	# Domain field
+	[Parameter(Mandatory=$false,
+    HelpMessage="The domain of the user account being used to login.")]
+    [string]$domain,
 
-    # Webpage login url field
+    # Webpage login url field (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The url of the webpage to log into.")]
     [string]$webpage_url,
 
-    # Username field ID on the login webpage
+    # Username field ID on the login webpage (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The url of the webpage to log into.")]
     [string]$username_id,
 
-    # Password field ID on the login webpage
+    # Password field ID on the login webpage (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The url of the webpage to log into.")]
     [string]$password_id,
 
-    # Submit/enter button field ID on the login webpage
+    # Submit/enter button field ID on the login webpage (Required)
     [Parameter(Mandatory=$true,
     HelpMessage="The url of the webpage to log into.")]
     [string]$submit_id
 )
 
+# Modern browsers require TLS 1.2
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-######### Define hard coded cariables here #########
-# Set the browser type
-$browser = "chrome"
-# Set the working path for the script to download files to and work out of
-$working_directory = "C:\Program Files\WindowsPowerShell\Modules\Selenium\Chromedriver_Utilities"
-####################################################
+# Get the current execution policy for the given user and process
+$execution_policy_user = Get-ExecutionPolicy -Scope CurrentUser
+$execution_policy_process = Get-ExecutionPolicy -Scope Process
 
+# Set the execution policy to bypass for the current user and process
+Set-ExecutionPolicy Bypass -Scope CurrentUser -Force
+Set-ExecutionPolicy Bypass -Scope Process -Force
 
 # Check if selenium exists. If not, install it.
 if (Get-Module -ListAvailable -Name Selenium) {
     # Import the selenium module
     Import-Module Selenium
+	Write-Host "Imported Selenium"
 } else {
+	Write-Host "Installing Selenium..."
     # Install selenium
-    Install-Module -Name Selenium -RequiredVersion 3.0.1 -Force
+    Install-Module -Name Selenium -RequiredVersion 3.0.1 -Force -Scope CurrentUser
 
     # Import the selenium module
     Import-Module Selenium
 }
+
+# Get the install path of selenium
+$selenium_path = (Get-Module -ListAvailable Selenium).path
+$selenium_path = $selenium_path.replace("Selenium.psd1", "")
+
+####################################################
+######### Define hard coded variables here #########
+# Set the browser type
+$browser = "chrome"
+# Set the working path for the script to download files to and work out of
+$working_directory = $selenium_path + "Chromedriver_Utilities"
+
+# Element IDs for the advanced/continue buttons on chrome that appear when https is not being used,
+# Or when the cert provided by the site isn't trusted.
+# These IDs are specific to chrome
+$advanced_button_id = "details-button"
+$proceed_button_id = "proceed-link"
+
+# Set the default wait time in between items (In seconds)
+$default_wait = 1
+
+####################################################
+####################################################
 
 
 # Define a function to kill the chrome driver process if found
@@ -110,16 +141,17 @@ function find_application_path {
     )
     Write-host "Searching for executable path in the registry..."
     # Search the HKLM registry for the application
-    $registry_path = reg query HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\ /s /f \$FileName | findstr Default
+    $registry_path = reg query "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths" /s /f \$FileName | findstr Default
     # regex to find the drive letter until $FileName
     if ($registry_path -match "[A-Z]\:.+$FileName") {
+		Write-Host "Found $FileName path in registry."
         return @{
             success = $true
             path = $Matches[0]
         }
-         Write-Host "Found path in registry."
     }
     else {
+		Write-Host "Could not find path for $FileName"
         return @{
             success = $false
             path = ""
@@ -135,9 +167,6 @@ function Download-Driver {
         [Parameter(Mandatory=$true)]$chrome_version
     )
     Write-Host "Downloading chrome driver executable..."
-
-    # Modern browsers require TLS 1.2
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     # Get all the links from the chromedriver site
     $driver_links = (Invoke-WebRequest "https://chromedriver.chromium.org/downloads" -UseBasicParsing).Links
@@ -164,8 +193,10 @@ function Download-Driver {
         $working_directory_check = Test-Path $working_directory
         # If path exists, delete anything in it. Otherwise create it.
         if ($working_directory_check -eq $true) {
+			Write-Host "Working directory exists. Continuing..."
             Get-ChildItem $working_directory -Recurse | Remove-Item -Force -Recurse
         } else {
+			Write-Host "Working directory doesn't exist. Creating..."
             New-Item -Path $working_directory -ItemType Directory
         }
 
@@ -183,7 +214,10 @@ function Download-Driver {
         Remove-Item $download_path
     }
     # Return the unzipped folder path
-    $unzipped_path
+	return @{
+		success = $true
+		path = $unzipped_path
+	}
 }
 
 
@@ -195,14 +229,29 @@ try {
     # Start chrome browser in incognito mode
     $driver = Start-SeChrome -Incognito
 
-    # Sleep for 1 second
-    Start-Sleep -Seconds 1
+	# Try to navigate to login url, if SSL errors exist, bypass them
+	try {
+		# Sleep for default count
+		Start-Sleep -Seconds $default_wait
+		
+		# Navigate to the webpage login url
+		Enter-SeUrl $webpage_url -Driver $driver
+		
+	} finally {
+		# Sleep for default count
+		Start-Sleep -Seconds $default_wait
+		
+		# Click the advanced/error details button
+		$advanced_button = Find-SeElement -Driver $driver -Id $advanced_button_id
+		Invoke-SeClick -Element $advanced_button
+		
+		# Click the proceed to url button
+		$proceed_button = Find-SeElement -Driver $driver -Id $proceed_button_id
+		Invoke-SeClick -Element $proceed_button
+	}
 
-    # Navigate to the webpage login url
-    Enter-SeUrl $webpage_url -Driver $driver
-
-    # Sleep for 1 second
-    Start-Sleep -Seconds 1
+    # Sleep for default count
+    Start-Sleep -Seconds $default_wait
 
     # Find the username element id
     $username_element = Find-SeElement -Driver $driver -Id $username_id
@@ -245,71 +294,88 @@ try {
 
         # Check to see if the chrome driver already exists.
         # If so, make sure it is the correct version.
-        $driver_path = Test-Path "C:\Program Files\WindowsPowerShell\Modules\Selenium"
+        $driver_path = Test-Path $selenium_path
 
         if ($driver_path -eq $true) {
             # Get selenium version since it appears in the file path
             $selenium_version = (Find-Module -Name Selenium).Version.ToString()
 
             # Set chrome driver path
-            $driver_full_path = "C:\Program Files\WindowsPowerShell\Modules\Selenium\" + $selenium_version + "\assemblies\chromedriver.exe"
+            $driver_full_path = $selenium_path + "assemblies\chromedriver.exe"
 
             # Download the respective version of the chrome driver
-            $output_path = (Download-Driver $browser_version)
-            $chrome_driver_path = Join-Path $output_path[-1] "\chromedriver.exe"
-
+            $output_path = (Download-Driver $browser_version).path
+            $chrome_driver_path = Join-Path $output_path "\chromedriver.exe"
+			
             # Check if a driver already exists or not
-            if ((Test-Path $driver_full_path) -eq $true) {
+			$existing_driver = Test-Path $driver_full_path
+            if ($existing_driver -eq $true) {
                 # Delete the old driver and replace it with the correct one
                 Remove-Item $driver_full_path -Force
-                #Rename-Item -Path $driver_full_path -NewName "chromedriver_older.exe"
                 # Move the new driver to the assemblies folder
-                Move-Item –Path $chrome_driver_path -Destination $driver_full_path
-
+                $chrome_driver_path | Move-Item -Destination $driver_full_path -Force
             } else {
                 # Move the new driver to the assemblies folder
-                Move-Item –Path $chrome_driver_path -Destination $driver_full_path
+                $chrome_driver_path | Move-Item -Destination $driver_full_path -Force
             }
         } else {
             Write-Host "Selenium not installed despite checks."
         }
 
-        # Start chrome browser in incognito mode
-        $driver = Start-SeChrome -Incognito
+		# Start chrome browser in incognito mode
+		$driver = Start-SeChrome -Incognito
 
-        # Sleep for 1 second
-        Start-Sleep -Seconds 1
+		# Try to navigate to login url, if SSL errors exist, bypass them
+		try {
+			# Sleep for default count
+			Start-Sleep -Seconds $default_wait
+			
+			# Navigate to the webpage login url
+			Enter-SeUrl $webpage_url -Driver $driver
+			
+		} finally {
+			# Sleep for default count
+			Start-Sleep -Seconds $default_wait
+			
+			# Click the advanced/error details button
+			$advanced_button = Find-SeElement -Driver $driver -Id $advanced_button_id
+			Invoke-SeClick -Element $advanced_button
+			
+			# Click the proceed to url button
+			$proceed_button = Find-SeElement -Driver $driver -Id $proceed_button_id
+			Invoke-SeClick -Element $proceed_button
+		}
 
-        # Navigate to the webpage login url
-        Enter-SeUrl $webpage_url -Driver $driver
+		# Sleep for default count
+		Start-Sleep -Seconds $default_wait
 
-        # Sleep for 1 second
-        Start-Sleep -Seconds 1
+		# Find the username element id
+		$username_element = Find-SeElement -Driver $driver -Id $username_id
 
-        # Find the username element id
-        $username_element = Find-SeElement -Driver $driver -Id $username_id
+		# Find the password element id
+		$password_element = Find-SeElement -Driver $driver -Id $password_id
 
-        # Find the password element id
-        $password_element = Find-SeElement -Driver $driver -Id $password_id
+		# Find the submit button id
+		$submit_element = Find-SeElement -Driver $driver -Id $submit_id
 
-        # Find the submit button id
-        $submit_element = Find-SeElement -Driver $driver -Id $submit_id
+		# Send the username to the username field in the browser
+		Send-SeKeys -Element $username_element -Keys $username
 
-        # Send the username to the username field in the browser
-        Send-SeKeys -Element $username_element -Keys $username
+		# Send the password to the password field in the browser
+		Send-SeKeys -Element $password_element -Keys $password
 
-        # Send the password to the password field in the browser
-        Send-SeKeys -Element $password_element -Keys $password
-
-        # Send the command to click the submit or sign-in button
-        Invoke-SeClick -Element $submit_element
+		# Send the command to click the submit or sign-in button
+		Invoke-SeClick -Element $submit_element
 
     } else {
         Write-Host "Cannot find $broswer on this machine."
     }
 }
 
-### Cleanup ###
+##### Cleanup #####
+# Sleep for default count
+Start-Sleep -Seconds $default_wait
+
 Write-Host "Cleaning up..."
 # Stop the chrome driver process
 purge_driver_process
@@ -320,4 +386,7 @@ if ($working_directory_check -eq $true) {
     # Delete the working directory
     Remove-Item $working_directory -Force
 }
-###############
+# Reset the execution policy
+Set-ExecutionPolicy $execution_policy_user -Scope CurrentUser -Force
+Set-ExecutionPolicy $execution_policy_process -Scope Process -Force
+###################
