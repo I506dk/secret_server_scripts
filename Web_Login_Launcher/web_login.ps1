@@ -6,7 +6,7 @@ Powershell script to automatically log into a given url using selenium
 # https://github.com/adamdriscoll/selenium-powershell
 
 # Example usage from the command line
-# powershell.exe C:\path\to\script\.\web_login.ps1 -username myname -password mypasword -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
+# powershell.exe C:\path\to\script\.\web_login.ps1 -username myname -password mypasword -domain my.domain -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
 
 # Password field may contain characters that need to be escaped using a backtick `
 # Characters to escape: $&(){}<>\|;',
@@ -23,7 +23,7 @@ Record Additional Processes: < None >
 Use SSH Tunneling with SSH Proxy: No
 
 Process Name: powershell.exe
-Process Arguments: C:\path\to\script\.\web_login.ps1 -username $USERNAME -password $PASSWORD -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
+Process Arguments: C:\path\to\script\.\web_login.ps1 -username '$USERNAME' -password '$PASSWORD' -domain '$DOMAIN' -webpage_url "https://mypage.com/" -username_id "signin-username" -password_id "signin-password" -submit_id "signin-button"
 Run Process as Secret Credentials: No
 Load User Profile: No
 Use Operating System Shell: No
@@ -46,10 +46,18 @@ param(
     HelpMessage="The password to inject into the webpage.")]
     [string]$password,
 	
-	# Domain field
-	[Parameter(Mandatory=$false,
+	# Domain field (Required)
+	[Parameter(Mandatory=$true,
     HelpMessage="The domain of the user account being used to login.")]
     [string]$domain,
+
+	# Mode argument
+	# if the domain is supplied this determines whether the username should be formatted differently
+	# For example domain\username or username@domain instead of just the username
+	# Options for the mode argument should be domain, email, or username
+	[Parameter(Mandatory=$false,
+    HelpMessage="The mode that defines the formatting of the username. Examples: domain\username or username@domain")]
+    [string]$mode,
 
     # Webpage login url field (Required)
     [Parameter(Mandatory=$true,
@@ -162,7 +170,7 @@ function find_application_path {
 
 # Define a function to parse the chrome driver page,
 # and download the correct driver for a given version of chrome
-function Download-Driver {
+function download_Driver {
     Param (
         [Parameter(Mandatory=$true)]$chrome_version
     )
@@ -221,6 +229,35 @@ function Download-Driver {
 }
 
 
+# Define a function to change the username format that is passed to the webpage
+function format_username {
+	param (
+        [string]$username_mode,
+		[string]$passed_username,
+		[string]$passed_domain
+    )
+	# If the mode contains domain, assume that the username should be formatted
+	# domain\username
+    Write-Host "formatting username"
+	if ($username_mode -contains "domain") {
+		$formatted_username = ($passed_domain.Split("."))[0] + "\" + $passed_username
+	# If the mode contains email, assume that the username should be formatted
+	# username@domain
+	} elseif ($username_mode -contains "email"){
+		$formatted_username = $passed_username + "@" + $passed_domain
+	# Assume anything else just needs the base username
+	} else {
+		$formatted_username = $passed_username
+	}
+	# Return the newly formatted username
+	return @{
+		success = $true
+		name = $formatted_username
+	}
+	
+}
+
+
 # Initially try to launch chrome. 
 try {
     # Remove any already running chrome driver processes
@@ -236,8 +273,7 @@ try {
 		
 		# Navigate to the webpage login url
 		Enter-SeUrl $webpage_url -Driver $driver
-		
-	} finally {
+	} catch {
 		# Sleep for default count
 		Start-Sleep -Seconds $default_wait
 		
@@ -248,7 +284,13 @@ try {
 		# Click the proceed to url button
 		$proceed_button = Find-SeElement -Driver $driver -Id $proceed_button_id
 		Invoke-SeClick -Element $proceed_button
-	}
+	} finally {
+		# Sleep for default count
+		Start-Sleep -Seconds $default_wait
+		
+		# Navigate to the webpage login url
+		Enter-SeUrl $webpage_url -Driver $driver
+    }
 
     # Sleep for default count
     Start-Sleep -Seconds $default_wait
@@ -262,8 +304,17 @@ try {
     # Find the submit button id
     $submit_element = Find-SeElement -Driver $driver -Id $submit_id
 
-    # Send the username to the username field in the browser
-    Send-SeKeys -Element $username_element -Keys $username
+    # If the mode is set, format the username respectively
+    if ($mode) {
+        # Get the newly formatted username
+        $formatted_username = (format_username -username_mode $mode -passed_username $username -passed_domain $domain).name
+
+        # Send the username to the username field in the browser
+        Send-SeKeys -Element $username_element -Keys $formatted_username
+    } else {
+        # Send the username to the username field in the browser
+        Send-SeKeys -Element $username_element -Keys $username
+    }
 
     # Send the password to the password field in the browser
     Send-SeKeys -Element $password_element -Keys $password
@@ -304,7 +355,7 @@ try {
             $driver_full_path = $selenium_path + "assemblies\chromedriver.exe"
 
             # Download the respective version of the chrome driver
-            $output_path = (Download-Driver $browser_version).path
+            $output_path = (download_driver $browser_version).path
             $chrome_driver_path = Join-Path $output_path "\chromedriver.exe"
 			
             # Check if a driver already exists or not
@@ -358,8 +409,17 @@ try {
 		# Find the submit button id
 		$submit_element = Find-SeElement -Driver $driver -Id $submit_id
 
-		# Send the username to the username field in the browser
-		Send-SeKeys -Element $username_element -Keys $username
+        # If the mode is set, format the username respectively
+        if ($mode) {
+            # Get the newly formatted username
+            $formatted_username = (format_username -username_mode $mode -passed_username $username -passed_domain $domain).name
+
+            # Send the username to the username field in the browser
+            Send-SeKeys -Element $username_element -Keys $formatted_username
+        } else {
+            # Send the username to the username field in the browser
+            Send-SeKeys -Element $username_element -Keys $username
+        }
 
 		# Send the password to the password field in the browser
 		Send-SeKeys -Element $password_element -Keys $password
