@@ -238,7 +238,6 @@ function format_username {
     )
 	# If the mode contains domain, assume that the username should be formatted
 	# domain\username
-    Write-Host "formatting username"
 	if ($username_mode -contains "domain") {
 		$formatted_username = ($passed_domain.Split("."))[0] + "\" + $passed_username
 	# If the mode contains email, assume that the username should be formatted
